@@ -1,57 +1,70 @@
 import os
-import time
 import requests
 from bs4 import BeautifulSoup
+
+URL = "https://prodoctorov.ru/nnovgorod/vrach/1032093-ivanova/"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-URL = "https://prodoctorov.ru/nnovgorod/vrach/1032093-ivanova/"
-
-seen_slots = set()
 
 def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
+    requests.post(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        data={"chat_id": CHAT_ID, "text": text}
+    )
 
 
-def parse_slots():
+def get_slots():
     headers = {"User-Agent": "Mozilla/5.0"}
     r = requests.get(URL, headers=headers, timeout=20)
+
     soup = BeautifulSoup(r.text, "html.parser")
 
     slots = set()
 
-    # ищем все кнопки/времена (синие слоты)
-    for btn in soup.find_all("button"):
-        txt = btn.get_text(strip=True)
-        if ":" in txt and len(txt) <= 5:
-            slots.add(txt)
+    # ищем все времена вида 10:00, 11:30 и т.д.
+    for el in soup.find_all(text=True):
+        t = el.strip()
+        if len(t) <= 5 and ":" in t:
+            parts = t.split(":")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                slots.add(t)
 
     return slots
 
 
+def load_old():
+    try:
+        with open("slots.txt", "r") as f:
+            return set(f.read().splitlines())
+    except:
+        return set()
+
+
+def save_new(slots):
+    with open("slots.txt", "w") as f:
+        f.write("\n".join(slots))
+
+
 def main():
-    global seen_slots
+    try:
+        current = get_slots()
+        old = load_old()
 
-    send_message("🟢 Бот запущен и следит за новыми окнами")
+        new = current - old
 
-    while True:
-        try:
-            current = parse_slots()
+        if new:
+            msg = "🔔 Новые свободные окна:\n" + "\n".join(sorted(new)) + f"\n\n{URL}"
+            send_message(msg)
 
-            new_slots = current - seen_slots
+        save_new(current)
 
-            if new_slots:
-                for slot in sorted(new_slots):
-                    send_message(f"🔔 Новое окно: {slot}\n{URL}")
+        # чтобы ты видел, что job реально запустился
+        send_message("🟢 Проверка выполнена")
 
-                seen_slots = current
-
-        except Exception as e:
-            print("error:", e)
-
-        time.sleep(30)
+    except Exception as e:
+        send_message(f"⚠️ Ошибка бота: {e}")
 
 
 if __name__ == "__main__":
