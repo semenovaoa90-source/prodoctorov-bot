@@ -1,70 +1,61 @@
 import os
+import asyncio
+from playwright.async_api import async_playwright
 import requests
-from bs4 import BeautifulSoup
 
 URL = "https://prodoctorov.ru/nnovgorod/vrach/1032093-ivanova/"
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+seen = set()
 
-def send_message(text):
+
+def send(text):
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
         data={"chat_id": CHAT_ID, "text": text}
     )
 
 
-def get_slots():
-    headers = {"User-Agent": "Mozilla/5.0"}
-    r = requests.get(URL, headers=headers, timeout=20)
+async def check():
+    global seen
 
-    soup = BeautifulSoup(r.text, "html.parser")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
 
-    slots = set()
+        await page.goto(URL, timeout=60000)
+        await page.wait_for_timeout(5000)  # ждём JS
 
-    # ищем все времена вида 10:00, 11:30 и т.д.
-    for el in soup.find_all(text=True):
-        t = el.strip()
-        if len(t) <= 5 and ":" in t:
-            parts = t.split(":")
-            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                slots.add(t)
+        text = await page.content()
 
-    return slots
+        slots = set()
 
+        # ищем времена типа 10:00
+        import re
+        times = re.findall(r"\b\d{1,2}:\d{2}\b", text)
 
-def load_old():
-    try:
-        with open("slots.txt", "r") as f:
-            return set(f.read().splitlines())
-    except:
-        return set()
+        for t in times:
+            slots.add(t)
 
+        new = slots - seen
 
-def save_new(slots):
-    with open("slots.txt", "w") as f:
-        f.write("\n".join(slots))
+        if new:
+            send("🔔 Новые окна:\n" + "\n".join(sorted(new)) + f"\n\n{URL}")
+
+        seen = slots
+
+        await browser.close()
 
 
 def main():
     try:
-        current = get_slots()
-        old = load_old()
-
-        new = current - old
-
-        if new:
-            msg = "🔔 Новые свободные окна:\n" + "\n".join(sorted(new)) + f"\n\n{URL}"
-            send_message(msg)
-
-        save_new(current)
-
-        # чтобы ты видел, что job реально запустился
-        send_message("🟢 Проверка выполнена")
-
+        import asyncio
+        asyncio.run(check())
+        send("🟢 Проверка выполнена")
     except Exception as e:
-        send_message(f"⚠️ Ошибка бота: {e}")
+        send(f"⚠️ Ошибка: {e}")
 
 
 if __name__ == "__main__":
