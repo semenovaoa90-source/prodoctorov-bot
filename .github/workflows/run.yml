@@ -1,29 +1,39 @@
-name: doctor-monitor
+name: ProDoctorov monitor
 
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  run:
+  monitor:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
-      - name: Install deps
-        run: |
-          pip install -r requirements.txt
-          playwright install chromium
+      - name: Install packages
+        run: pip install -r requirements.txt
 
       - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python bot.py
+
+      - name: Save state
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git add state.json
+          git commit -m "Update state" || exit 0
+          git push
