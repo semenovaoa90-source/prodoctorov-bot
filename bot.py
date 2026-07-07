@@ -1,61 +1,85 @@
 import os
-import asyncio
-from playwright.async_api import async_playwright
+import json
 import requests
-
-URL = "https://prodoctorov.ru/nnovgorod/vrach/1032093-ivanova/"
+from datetime import date
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-seen = set()
+API = "https://prodoctorov.ru/ajax/schedule/slots_bulk/"
+
+PAYLOAD = {
+    "days": 30,
+    "dt_start": str(date.today()),
+    "all_slots": False,
+    "doctors_lpus": [
+        {
+            "doctor_id": 1032093,
+            "lpu_id": 101921,
+            "lpu_timedelta": 3,
+            "has_slots": True
+        }
+    ],
+    "town_timedelta": 3
+}
 
 
-def send(text):
+def send(msg):
     requests.post(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        data={"chat_id": CHAT_ID, "text": text}
+        data={
+            "chat_id": CHAT_ID,
+            "text": msg
+        }
     )
 
 
-async def check():
-    global seen
+def get_slots():
+    r = requests.post(
+        API,
+        json=PAYLOAD,
+        headers={
+            "User-Agent": "Mozilla/5.0"
+        },
+        timeout=20
+    )
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+    data = r.json()
 
-        await page.goto(URL, timeout=60000)
-        await page.wait_for_timeout(5000)  # ждём JS
+    slots = []
 
-        text = await page.content()
+    for item in data["result"]:
+        for day, times in item["slots"].items():
+            for slot in times:
+                if slot.get("free"):
+                    slots.append(
+                        f"{day} {slot['time']}"
+                    )
 
-        slots = set()
-
-        # ищем времена типа 10:00
-        import re
-        times = re.findall(r"\b\d{1,2}:\d{2}\b", text)
-
-        for t in times:
-            slots.add(t)
-
-        new = slots - seen
-
-        if new:
-            send("🔔 Новые окна:\n" + "\n".join(sorted(new)) + f"\n\n{URL}")
-
-        seen = slots
-
-        await browser.close()
+    return set(slots)
 
 
 def main():
-    try:
-        import asyncio
-        asyncio.run(check())
-        send("🟢 Проверка выполнена")
-    except Exception as e:
-        send(f"⚠️ Ошибка: {e}")
+    old = set()
+
+    send("🟢 Монитор ProDoctorov запущен")
+
+    while True:
+        try:
+            current = get_slots()
+
+            new = current - old
+
+            if new:
+                send(
+                    "🔔 Новые окна:\n\n" +
+                    "\n".join(sorted(new))
+                )
+
+            old = current
+
+        except Exception as e:
+            send(f"⚠️ Ошибка: {e}")
 
 
 if __name__ == "__main__":
